@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>wired-transport</title>
+    <link rel="stylesheet" href="/wired-transport/styles-39786c53febf0132.css" integrity="sha384-yTssnDQXN65OOu3g6UzbovUav6gO/VZiepXpZRK8xkaW2m6n0yoDlvDROKtTRlN0"/>
+    
+<script type="module">
+import init, * as bindings from '/wired-transport/wired-wasm-17a019da4299d6e1.js';
+const wasm = await init({ module_or_path: '/wired-transport/wired-wasm-17a019da4299d6e1_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  <link rel="modulepreload" href="/wired-transport/wired-wasm-17a019da4299d6e1.js" crossorigin="anonymous" integrity="sha384-4/GdOhr4sW+GHGyvFeGO/Bd6/wYx2pZEcPHqHSYIV3Pu90rRbgGAwYy9ZqYte6Ew"><link rel="preload" href="/wired-transport/wired-wasm-17a019da4299d6e1_bg.wasm" crossorigin="anonymous" integrity="sha384-vyO28NO1ZU7uRdoU6dkkS/SsaGP/+/wilp5GA4UlEKKj9voroTcOt9wLImuhnJvM" as="fetch" type="application/wasm"></head>
+  <body></body>
+</html>
