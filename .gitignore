@@ -1,0 +1,3 @@
+/target/
+/wired-wasm/dist/
+*.log

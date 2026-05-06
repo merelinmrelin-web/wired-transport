@@ -1,0 +1,9 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+port = 8080
+
+[tools]
+public_url = "/wired-transport/"

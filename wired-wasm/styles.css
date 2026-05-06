@@ -1,0 +1,231 @@
+:root {
+  color-scheme: dark;
+  --bg: #05020a;
+  --panel: rgba(13, 9, 28, 0.84);
+  --text: #eef6ff;
+  --muted: #8aa2b8;
+  --cyan: #00f6ff;
+  --pink: #ff2bd6;
+  --acid: #d7ff38;
+  --line: rgba(0, 246, 255, 0.24);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(255, 43, 214, 0.24), transparent 28rem),
+    radial-gradient(circle at 88% 18%, rgba(0, 246, 255, 0.2), transparent 30rem),
+    linear-gradient(135deg, #05020a, #09051a 54%, #12071b);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 100% 4px;
+  mix-blend-mode: overlay;
+}
+
+.shell {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 56px 0;
+}
+
+.hero {
+  border-left: 3px solid var(--pink);
+  padding-left: 24px;
+  margin-bottom: 28px;
+}
+
+.eyebrow,
+.panel-title,
+.status,
+.decoded {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--acid);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(3rem, 11vw, 7rem);
+  line-height: 0.88;
+  letter-spacing: -0.08em;
+  text-shadow: 0 0 24px rgba(0, 246, 255, 0.38), 4px 0 0 rgba(255, 43, 214, 0.55);
+}
+
+.lede {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 1.08rem;
+  line-height: 1.65;
+}
+
+.terminal-grid {
+  display: grid;
+  grid-template-columns: 0.95fr 1.05fr;
+  gap: 18px;
+}
+
+.panel {
+  position: relative;
+  overflow: hidden;
+  min-height: 220px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(16, 11, 39, 0.92), var(--panel));
+  box-shadow: 0 0 0 1px rgba(255, 43, 214, 0.08), 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.panel::after {
+  content: "";
+  position: absolute;
+  inset: auto -20% 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), var(--pink), transparent);
+}
+
+.panel-title {
+  color: var(--cyan);
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+
+.output {
+  grid-column: 1 / -1;
+  min-height: 180px;
+}
+
+.drop-zone {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 154px;
+  border: 1px dashed rgba(0, 246, 255, 0.5);
+  background: repeating-linear-gradient(135deg, rgba(0, 246, 255, 0.06) 0 8px, transparent 8px 16px);
+  cursor: pointer;
+}
+
+.drop-zone input {
+  display: none;
+}
+
+.drop-mark {
+  color: var(--pink);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.file-name {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(0, 246, 255, 0.28);
+  background: rgba(2, 1, 10, 0.72);
+  color: var(--text);
+  padding: 12px 14px;
+  outline: none;
+}
+
+textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--pink);
+  box-shadow: 0 0 0 3px rgba(255, 43, 214, 0.16);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+button,
+.download {
+  border: 0;
+  background: var(--cyan);
+  color: #02010a;
+  padding: 12px 18px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: 5px 5px 0 var(--pink);
+}
+
+button.secondary {
+  background: var(--acid);
+}
+
+.download {
+  display: inline-block;
+  margin-top: 20px;
+}
+
+.status,
+.decoded {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.status {
+  color: var(--acid);
+}
+
+.decoded {
+  margin-top: 16px;
+  color: var(--text);
+}
+
+@media (max-width: 760px) {
+  .shell {
+    width: min(100vw - 20px, 1120px);
+    padding: 30px 0;
+  }
+
+  .terminal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .output {
+    grid-column: auto;
+  }
+}
