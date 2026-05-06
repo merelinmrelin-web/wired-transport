@@ -1,6 +1,3 @@
-use std::io::Cursor;
-
-use image::ImageFormat;
 use js_sys::{Array, Uint8Array};
 use leptos::*;
 use wasm_bindgen::JsCast;
@@ -19,6 +16,7 @@ pub fn App() -> impl IntoView {
     let (status, set_status) = create_signal(String::from("awaiting carrier image"));
     let (decoded, set_decoded) = create_signal(String::new());
     let (download_url, set_download_url) = create_signal::<Option<String>>(None);
+    let (download_name, set_download_name) = create_signal(String::from("wired-carrier.png"));
 
     let load_file = move |file: File| {
         let name = file.name();
@@ -55,18 +53,24 @@ pub fn App() -> impl IntoView {
 
     let encode = move |_| {
         let Some(bytes) = cover_bytes.get_untracked() else {
-            set_status.set(String::from("load a PNG carrier first"));
+            set_status.set(String::from("load a PNG or JPEG carrier first"));
             return;
         };
         let payload = payload.get_untracked();
         let key = key.get_untracked();
 
         set_status.set(String::from("encoding encrypted payload"));
-        match encode_png(&bytes, payload.as_bytes(), key.as_bytes()) {
-            Ok(png) => match png_download_url(&png) {
+        match encode_carrier(&bytes, payload.as_bytes(), key.as_bytes()) {
+            Ok(encoded) => match download_url_for(&encoded.bytes, encoded.container.mime_type()) {
                 Ok(url) => {
+                    set_download_name
+                        .set(format!("wired-carrier.{}", encoded.container.extension()));
                     set_download_url.set(Some(url));
-                    set_status.set(format!("encoded {} bytes into carrier", payload.len()));
+                    set_status.set(format!(
+                        "encoded {} bytes into {} carrier",
+                        payload.len(),
+                        encoded.container.extension()
+                    ));
                 }
                 Err(err) => set_status.set(format!("download URL failed: {err:?}")),
             },
@@ -76,13 +80,13 @@ pub fn App() -> impl IntoView {
 
     let decode = move |_| {
         let Some(bytes) = cover_bytes.get_untracked() else {
-            set_status.set(String::from("load a wired PNG first"));
+            set_status.set(String::from("load a wired PNG or JPEG first"));
             return;
         };
         let key = key.get_untracked();
 
         set_status.set(String::from("extracting payload"));
-        match decode_png(&bytes, key.as_bytes()) {
+        match decode_carrier(&bytes, key.as_bytes()) {
             Ok(data) => {
                 set_decoded.set(String::from_utf8_lossy(&data).to_string());
                 set_status.set(format!("decoded {} bytes", data.len()));
@@ -97,7 +101,7 @@ pub fn App() -> impl IntoView {
                 <p class="eyebrow">"L7 steganography transport"</p>
                 <h1>"wired-transport"</h1>
                 <p class="lede">
-                    "Encrypt, Reed-Solomon shard, and scatter payload bits into PNG RGB LSB channels with deterministic xoshiro mapping."
+                    "Encrypt, Reed-Solomon shard, and scatter payload bits into PNG RGB LSBs or JPEG DCT mid-band coefficients with deterministic xoshiro mapping."
                 </p>
             </section>
 
@@ -109,8 +113,8 @@ pub fn App() -> impl IntoView {
                         on:dragover=move |ev| ev.prevent_default()
                         on:drop=on_drop
                     >
-                        <input type="file" accept="image/png" on:change=on_file_change />
-                        <span class="drop-mark">"DROP PNG"</span>
+                        <input type="file" accept="image/png,image/jpeg" on:change=on_file_change />
+                        <span class="drop-mark">"DROP PNG/JPEG"</span>
                         <span class="file-name">{cover_name}</span>
                     </label>
                 </div>
@@ -137,8 +141,8 @@ pub fn App() -> impl IntoView {
                         <button class="secondary" on:click=decode>"extract"</button>
                     </div>
                     <Show when=move || download_url.get().is_some()>
-                        <a class="download" href=move || download_url.get().unwrap_or_default() download="wired-carrier.png">
-                            "download wired-carrier.png"
+                        <a class="download" href=move || download_url.get().unwrap_or_default() download=move || download_name.get()>
+                            {move || format!("download {}", download_name.get())}
                         </a>
                     </Show>
                 </div>
@@ -161,10 +165,13 @@ async fn read_file(file: File) -> Result<Vec<u8>, wasm_bindgen::JsValue> {
     Ok(bytes)
 }
 
-fn encode_png(input: &[u8], payload: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
-    let image = image::load_from_memory(input).map_err(|err| err.to_string())?;
-    let encoded = Encoder::inject_with_config(
-        image,
+fn encode_carrier(
+    input: &[u8],
+    payload: &[u8],
+    key: &[u8],
+) -> Result<wired_core::EncodedImage, String> {
+    Encoder::inject_bytes_with_config(
+        input,
         payload,
         key,
         StegoConfig {
@@ -172,27 +179,20 @@ fn encode_png(input: &[u8], payload: &[u8], key: &[u8]) -> Result<Vec<u8>, Strin
             bit_repetition: 15,
         },
     )
-    .map_err(|err| err.to_string())?;
-
-    let mut out = Cursor::new(Vec::new());
-    encoded
-        .write_to(&mut out, ImageFormat::Png)
-        .map_err(|err| err.to_string())?;
-    Ok(out.into_inner())
+    .map_err(|err| err.to_string())
 }
 
-fn decode_png(input: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
-    let image = image::load_from_memory(input).map_err(|err| err.to_string())?;
-    Decoder::extract(image, key).map_err(|err| err.to_string())
+fn decode_carrier(input: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
+    Decoder::extract_bytes(input, key).map_err(|err| err.to_string())
 }
 
-fn png_download_url(bytes: &[u8]) -> Result<String, wasm_bindgen::JsValue> {
+fn download_url_for(bytes: &[u8], mime_type: &str) -> Result<String, wasm_bindgen::JsValue> {
     let array = Uint8Array::from(bytes);
     let parts = Array::new();
     parts.push(&array.buffer());
 
     let options = BlobPropertyBag::new();
-    options.set_type("image/png");
+    options.set_type(mime_type);
     let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &options)?;
     Url::create_object_url_with_blob(&blob)
 }

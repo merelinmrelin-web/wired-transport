@@ -10,7 +10,7 @@ repository = "https://example.invalid/wired-transport"
 [workspace.dependencies]
 console_error_panic_hook = "0.1.7"
 getrandom = { version = "0.2", features = ["js"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 js-sys = "0.3"
 rand_core = "0.6"

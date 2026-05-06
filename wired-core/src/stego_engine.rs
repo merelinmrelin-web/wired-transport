@@ -1,20 +1,23 @@
-use image::{DynamicImage, RgbaImage};
+use std::io::Cursor;
+
+use image::codecs::jpeg::JpegEncoder;
+use image::{DynamicImage, ImageFormat, RgbaImage};
 use rand_core::{RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 use thiserror::Error;
 
-use crate::{crypto, ecc};
+use crate::{crypto, ecc, jpeg_dct};
 
-const MAGIC: &[u8; 4] = b"WTR1";
-const VERSION: u8 = 1;
-const HEADER_LEN: usize = 64;
+pub(crate) const MAGIC: &[u8; 4] = b"WTR1";
+pub(crate) const VERSION: u8 = 1;
+pub(crate) const HEADER_LEN: usize = 64;
 const HEADER_AUTH_LEN: usize = 44;
 const HEADER_TAG_OFFSET: usize = 44;
 const HEADER_TAG_LEN: usize = 16;
-const HEADER_REPEAT: usize = 15;
-const MIN_PAYLOAD_REPEAT: usize = 1;
-const MAX_PAYLOAD_REPEAT: usize = 31;
-const PUBLIC_HEADER_SEED: [u8; 32] = [
+pub(crate) const HEADER_REPEAT: usize = 31;
+pub(crate) const MIN_PAYLOAD_REPEAT: usize = 1;
+pub(crate) const MAX_PAYLOAD_REPEAT: usize = 31;
+pub(crate) const PUBLIC_HEADER_SEED: [u8; 32] = [
     0x57, 0x49, 0x52, 0x45, 0x44, 0x2d, 0x48, 0x44, 0x52, 0x2d, 0x53, 0x45, 0x45, 0x44, 0x2d, 0x31,
     0x6c, 0x37, 0x2d, 0x73, 0x74, 0x65, 0x67, 0x6f, 0x2d, 0x6d, 0x61, 0x70, 0x2d, 0x76, 0x31, 0x00,
 ];
@@ -25,6 +28,34 @@ pub struct StegoConfig {
     pub recovery_rate: f32,
     /// Number of physical LSB positions used for each encoded payload bit.
     pub bit_repetition: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImageContainer {
+    Png,
+    Jpeg,
+}
+
+impl ImageContainer {
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+        }
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct EncodedImage {
+    pub bytes: Vec<u8>,
+    pub container: ImageContainer,
 }
 
 impl Default for StegoConfig {
@@ -42,6 +73,10 @@ pub enum StegoError {
     Capacity,
     #[error("invalid or missing wired-transport header")]
     InvalidHeader,
+    #[error("unsupported image container")]
+    UnsupportedContainer,
+    #[error("image codec error: {0}")]
+    Image(String),
     #[error("crypto error: {0}")]
     Crypto(#[from] crypto::CryptoError),
     #[error("ecc error: {0}")]
@@ -51,6 +86,38 @@ pub enum StegoError {
 pub struct Encoder;
 
 impl Encoder {
+    pub fn inject_bytes(input: &[u8], data: &[u8], key: &[u8]) -> Result<EncodedImage, StegoError> {
+        Self::inject_bytes_with_config(input, data, key, StegoConfig::default())
+    }
+
+    pub fn inject_bytes_with_config(
+        input: &[u8],
+        data: &[u8],
+        key: &[u8],
+        config: StegoConfig,
+    ) -> Result<EncodedImage, StegoError> {
+        match detect_container(input)? {
+            ImageContainer::Png => {
+                let image = image::load_from_memory_with_format(input, ImageFormat::Png)
+                    .map_err(|err| StegoError::Image(err.to_string()))?;
+                let encoded = Self::inject_with_config(image, data, key, config)?;
+                Ok(EncodedImage {
+                    bytes: encode_png(&encoded)?,
+                    container: ImageContainer::Png,
+                })
+            }
+            ImageContainer::Jpeg => {
+                let image = image::load_from_memory_with_format(input, ImageFormat::Jpeg)
+                    .map_err(|err| StegoError::Image(err.to_string()))?;
+                let encoded = jpeg_dct::inject_with_config(image, data, key, config)?;
+                Ok(EncodedImage {
+                    bytes: encode_jpeg(&encoded, 92)?,
+                    container: ImageContainer::Jpeg,
+                })
+            }
+        }
+    }
+
     pub fn inject(
         image: DynamicImage,
         data: &[u8],
@@ -114,6 +181,21 @@ impl Encoder {
 pub struct Decoder;
 
 impl Decoder {
+    pub fn extract_bytes(input: &[u8], key: &[u8]) -> Result<Vec<u8>, StegoError> {
+        match detect_container(input)? {
+            ImageContainer::Png => {
+                let image = image::load_from_memory_with_format(input, ImageFormat::Png)
+                    .map_err(|err| StegoError::Image(err.to_string()))?;
+                Self::extract(image, key)
+            }
+            ImageContainer::Jpeg => {
+                let image = image::load_from_memory_with_format(input, ImageFormat::Jpeg)
+                    .map_err(|err| StegoError::Image(err.to_string()))?;
+                jpeg_dct::extract(image, key)
+            }
+        }
+    }
+
     pub fn extract(image: DynamicImage, key: &[u8]) -> Result<Vec<u8>, StegoError> {
         let rgba = image.to_rgba8();
         let capacity = lsb_capacity(&rgba);
@@ -151,14 +233,14 @@ impl Decoder {
 }
 
 #[derive(Debug)]
-struct ParsedHeader {
-    packet_len: usize,
-    bit_repetition: usize,
-    salt: [u8; crypto::SALT_LEN],
-    nonce: [u8; crypto::NONCE_LEN],
+pub(crate) struct ParsedHeader {
+    pub(crate) packet_len: usize,
+    pub(crate) bit_repetition: usize,
+    pub(crate) salt: [u8; crypto::SALT_LEN],
+    pub(crate) nonce: [u8; crypto::NONCE_LEN],
 }
 
-fn build_header(
+pub(crate) fn build_header(
     packet_len: u64,
     bit_repetition: u8,
     recovery_rate: f32,
@@ -179,7 +261,7 @@ fn build_header(
     header
 }
 
-fn parse_header(header: &[u8]) -> Result<ParsedHeader, StegoError> {
+pub(crate) fn parse_header(header: &[u8]) -> Result<ParsedHeader, StegoError> {
     if header.len() != HEADER_LEN || &header[..4] != MAGIC || header[4] != VERSION {
         return Err(StegoError::InvalidHeader);
     }
@@ -217,7 +299,7 @@ fn lsb_capacity(image: &RgbaImage) -> usize {
     image.width() as usize * image.height() as usize * 3
 }
 
-fn mapping_indices(
+pub(crate) fn mapping_indices(
     capacity: usize,
     count: usize,
     seed: [u8; 32],
@@ -241,7 +323,7 @@ fn mapping_indices(
     Ok(indices)
 }
 
-fn reserved_mask(capacity: usize, indices: &[usize]) -> Vec<bool> {
+pub(crate) fn reserved_mask(capacity: usize, indices: &[usize]) -> Vec<bool> {
     let mut reserved = vec![false; capacity];
     for idx in indices {
         reserved[*idx] = true;
@@ -291,7 +373,7 @@ fn read_lsb(image: &RgbaImage, index: usize) -> u8 {
     image.get_pixel(x, y).0[channel] & 1
 }
 
-fn bytes_to_bits(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn bytes_to_bits(bytes: &[u8]) -> Vec<u8> {
     let mut bits = Vec::with_capacity(bytes.len() * 8);
     for byte in bytes {
         for shift in (0..8).rev() {
@@ -301,7 +383,7 @@ fn bytes_to_bits(bytes: &[u8]) -> Vec<u8> {
     bits
 }
 
-fn bits_to_bytes(bits: &[u8]) -> Vec<u8> {
+pub(crate) fn bits_to_bytes(bits: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(bits.len().div_ceil(8));
     for chunk in bits.chunks(8) {
         let mut byte = 0u8;
@@ -314,6 +396,67 @@ fn bits_to_bytes(bits: &[u8]) -> Vec<u8> {
         bytes.push(byte);
     }
     bytes
+}
+
+pub(crate) fn encode_payload(
+    data: &[u8],
+    key: &[u8],
+    config: StegoConfig,
+) -> Result<
+    (
+        Vec<u8>,
+        [u8; crypto::SALT_LEN],
+        [u8; crypto::NONCE_LEN],
+        usize,
+    ),
+    StegoError,
+> {
+    let salt = crypto::random_salt()?;
+    let nonce = crypto::random_nonce()?;
+    let encrypted = crypto::encrypt(data, key, &salt, &nonce)?;
+    let ecc_packet = ecc::encode(&encrypted, config.recovery_rate)?;
+    let bit_repetition = config
+        .bit_repetition
+        .clamp(MIN_PAYLOAD_REPEAT, MAX_PAYLOAD_REPEAT);
+
+    Ok((ecc_packet, salt, nonce, bit_repetition))
+}
+
+pub(crate) fn decode_payload(
+    packet: &[u8],
+    key: &[u8],
+    salt: &[u8; crypto::SALT_LEN],
+    nonce: &[u8; crypto::NONCE_LEN],
+) -> Result<Vec<u8>, StegoError> {
+    let encrypted = ecc::decode(packet)?;
+    Ok(crypto::decrypt(&encrypted, key, salt, nonce)?)
+}
+
+fn detect_container(input: &[u8]) -> Result<ImageContainer, StegoError> {
+    if input.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Ok(ImageContainer::Png)
+    } else if input.starts_with(&[0xff, 0xd8, 0xff]) {
+        Ok(ImageContainer::Jpeg)
+    } else {
+        Err(StegoError::UnsupportedContainer)
+    }
+}
+
+fn encode_png(image: &DynamicImage) -> Result<Vec<u8>, StegoError> {
+    let mut out = Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, ImageFormat::Png)
+        .map_err(|err| StegoError::Image(err.to_string()))?;
+    Ok(out.into_inner())
+}
+
+fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>, StegoError> {
+    let mut out = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut out, quality);
+    encoder
+        .encode_image(image)
+        .map_err(|err| StegoError::Image(err.to_string()))?;
+    Ok(out)
 }
 
 #[cfg(test)]

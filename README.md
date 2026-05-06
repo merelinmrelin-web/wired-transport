@@ -1,11 +1,11 @@
 # wired-transport
 
-`wired-transport` is a Rust/WASM prototype for L7 steganography over valid PNG carriers. It encrypts payload bytes, applies Reed-Solomon forward error correction, and scatters the protected bitstream across RGB least-significant bits using deterministic pseudo-random mapping.
+`wired-transport` is a Rust/WASM prototype for L7 steganography over valid PNG and JPEG carriers. It encrypts payload bytes, applies Reed-Solomon forward error correction, and scatters the protected bitstream across RGB least-significant bits for PNG or mid-band DCT coefficients for JPEG.
 
 ## Workspace
 
-- `wired-core/`: reusable Rust library with `crypto`, `ecc`, and `stego_engine` modules.
-- `wired-wasm/`: Leptos + Trunk browser UI with drag-and-drop PNG handling.
+- `wired-core/`: reusable Rust library with `crypto`, `ecc`, `stego_engine`, and `jpeg_dct` modules.
+- `wired-wasm/`: Leptos + Trunk browser UI with drag-and-drop PNG/JPEG handling.
 
 ## Core API
 
@@ -17,6 +17,13 @@ let wired = Encoder::inject(carrier, b"payload", b"shared-key")?;
 let recovered = Decoder::extract(wired, b"shared-key")?;
 ```
 
+For byte-oriented container detection, use the unified API:
+
+```rust
+let encoded = Encoder::inject_bytes(&carrier_bytes, b"payload", b"shared-key")?;
+let recovered = Decoder::extract_bytes(&encoded.bytes, b"shared-key")?;
+```
+
 Use `Encoder::inject_with_config` to tune recovery overhead:
 
 ```rust
@@ -24,7 +31,7 @@ use wired_core::{Encoder, StegoConfig};
 
 let config = StegoConfig {
     recovery_rate: 0.25,
-    bit_repetition: 3,
+    bit_repetition: 15,
 };
 ```
 
@@ -33,24 +40,25 @@ let config = StegoConfig {
 1. Payload bytes are encrypted with `ring` ChaCha20-Poly1305 AEAD on native targets. The WASM target uses a pure-Rust ChaCha20-Poly1305/SHA-256 backend because `ring` requires a C toolchain path that is not consistently available for `wasm32-unknown-unknown` browser builds.
 2. Encrypted bytes are packetized into fixed-size Reed-Solomon shards using `reed-solomon-erasure`.
 3. Each shard receives a SHA-256-derived integrity tag so corrupted shards can be marked as erasures before reconstruction.
-4. The ECC packet is converted to bits, repeated, and written into RGB LSB channels only.
-5. `rand_xoshiro` maps bit positions from a key/salt-derived seed, scattering data across the image rather than creating a visible noisy block.
-6. The result is saved as a normal PNG; headers and chunk structure are produced by the `image` crate and remain valid/viewable.
+4. For PNG, the ECC packet is converted to bits, repeated, and written into RGB LSB channels only.
+5. For JPEG, `wired-core` decodes with pure-Rust JPEG support from the `image` stack, performs an internal 8x8 luminance DCT, and embeds bits into repeated mid-band AC coefficients while skipping DC coefficients.
+6. `rand_xoshiro` maps bit positions from a key/salt-derived seed, scattering data across the image rather than creating a visible noisy block.
+7. Outputs are saved as normal PNG or JPEG files; container structure is produced by the pure-Rust `image` codecs and remains valid/viewable.
 
 ## Robustness Model
 
-The default config uses `recovery_rate = 0.25` and `bit_repetition = 15`. Repetition absorbs random LSB flips at the bit level, while Reed-Solomon parity reconstructs shards that still fail integrity checks. This is intended to survive moderate random pixel/channel modification, including approximately 20% noisy pixel disturbance when the PNG dimensions and RGB samples are preserved.
+The default config uses `recovery_rate = 0.25` and `bit_repetition = 15`. Repetition absorbs random LSB or DCT coefficient disturbance at the bit level, while Reed-Solomon parity reconstructs shards that still fail integrity checks. PNG mode is intended to survive moderate random pixel/channel modification when dimensions and RGB samples are preserved.
 
-This is not magic resistance to destructive transforms. JPEG conversion, aggressive palette quantization, resizing, cropping, or DPI workflows that resample pixels can destroy the exact LSB positions and the deterministic mapping. For hostile lossy pipelines, increase `bit_repetition`, use larger carrier images, and avoid transforms that change dimensions or rewrite color samples.
+JPEG mode uses sign-modulated spread-spectrum embedding in mid-frequency AC coefficients and is tested against a 75-quality JPEG recompression round-trip. Resizing, cropping, aggressive denoising, or workflows that alter 8x8 block alignment can still destroy the deterministic mapping. For hostile lossy pipelines, increase `bit_repetition`, use larger carrier images, and avoid transforms that change dimensions.
 
 ## Browser UI
 
 The WASM app provides a dark terminal-style interface:
 
-- Drag or select a PNG carrier.
+- Drag or select a PNG or JPEG carrier.
 - Enter a shared key and plaintext payload.
-- Click `inject` to produce `wired-carrier.png`.
-- Load a wired PNG and click `extract` with the same key.
+- Click `inject` to produce `wired-carrier.png` or `wired-carrier.jpg`.
+- Load a wired PNG/JPEG and click `extract` with the same key.
 
 Run locally:
 
